@@ -1,0 +1,9 @@
+# Ignore environment variable files
+/.env
+
+# Other common ignores (you might see these already)
+__pycache__/
+*.pyc
+.Python
+env/
+venv/
