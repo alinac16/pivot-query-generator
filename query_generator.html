@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Google Sheets QUERY Generator</title>
+    <title>Google Sheets QUERY Generator</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
@@ -37,11 +37,7 @@
 </head>
 <body class="bg-gray-100 p-4">
     <div class="container">
-        <!-- New Logo Added Here -->
-        <div class="flex justify-center mb-6">
-            <img src="https://nanacoffeeroasters.com/cdn/shop/files/nana_coffee_roasters_logo_280x.png?v=1613160486" alt="Nana Coffee Roasters Logo" class="h-20 w-auto object-contain">
-        </div>
-        <h1 class="text-4xl font-extrabold text-center text-gray-900 mb-8">✨ Google Sheets QUERY Assistant ✨</h1>
+        <h1 class="text-4xl font-extrabold text-center text-gray-900 mb-8">✨ Google Sheets QUERY Generator ✨</h1>
 
         <div class="mb-6">
             <label for="csvFile" class="flex flex-col items-center justify-center max-w-md mx-auto py-4 px-6 border-2 border-dashed border-blue-400 rounded-lg text-blue-700 font-semibold text-lg cursor-pointer bg-blue-50 hover:bg-blue-100 hover:border-blue-500 transition duration-200 ease-in-out shadow-md hover:-translate-y-0.5">
@@ -176,7 +172,6 @@
         }
 
         async function generateQueryFormula() {
-            // Get selected headers from checked checkboxes
             const selectedCheckboxes = Array.from(document.querySelectorAll('#groupColumnsCheckboxes input[name="groupColumn"]:checked'));
             const selectedHeaders = selectedCheckboxes.map(checkbox => checkbox.value);
 
@@ -193,79 +188,57 @@
             queryOutputContainer.style.display = 'none';
 
             try {
-                // Construct the prompt for the LLM
-                let columnMappingsString = '';
-                for (const header of headers) { // Use original `headers` array to maintain order
-                    columnMappingsString += `- "${header}" (Google Sheet Column: ${headerColumnMap[header]})\n`;
+                // --- Start of deterministic QUERY generation logic ---
+                const selectedColumnLetters = selectedHeaders.map(header => headerColumnMap[header]);
+                const firstColumnLetter = getColumnLetter(0); // For COUNT(A)
+
+                // SELECT part
+                let selectPart = selectedColumnLetters.join(', ');
+                if (selectPart) { // Only add COUNT(A) if there are selected columns
+                    selectPart += `, COUNT(${firstColumnLetter})`;
+                } else { // Fallback if somehow no columns are selected but button is active (shouldn't happen)
+                    selectPart = `COUNT(${firstColumnLetter})`;
                 }
 
-                // Assuming 'Order ID' is the first column and its letter is 'A' for COUNT(A)
-                const firstColumnLetter = getColumnLetter(0); // This will typically be 'A'
-
-                // Modified prompt for the AI to ensure clean output
-                const prompt = `You are an expert Google Sheets QUERY formula generator.
-Given a list of column headers from a CSV file and their corresponding Google Sheets column letters, your task is to generate a Google Sheets QUERY formula based on user-selected columns for counting and grouping.
-
-Input CSV headers and their Google Sheets column mappings:
-${columnMappingsString}
-
-The user wants to count and group by the following columns:
-${selectedHeaders.map(h => `"${h}"`).join(', ')}
-
-Generate *only* the Google Sheets QUERY formula. Ensure absolutely NO markdown formatting (like \`\`\`googlesheets\`\`\` or \`\`\`\`), extra text, explanations, or any other characters are included before or after the formula. Your output must be the raw, direct QUERY formula, starting with "=" and ending with the final quote.
-- The data range is always \`orders!A:BR\` (assuming your data is in a sheet named 'orders').
-- Select the specified columns and \`COUNT(${firstColumnLetter})\`.
-- Group by the specified columns.
-- Order by \`COUNT(${firstColumnLetter})\` in descending order.
-- Label the selected columns with their original header names, and \`COUNT(${firstColumnLetter})\` as 'Count'.
-
-Example:
-Headers: "order id", "item name", "city"
-Mappings: - "order id" (Google Sheet Column: A)
-          - "item name" (Google Sheet Column: B)
-          - "city" (Google Sheet Column: C)
-Selected: ["item name", "city"]
-
-Output (exactly this, nothing else):
-=QUERY(orders!A:BR, "SELECT B, C, COUNT(A) WHERE B IS NOT NULL GROUP BY B, C ORDER BY COUNT(A) DESC LABEL B 'item name', C 'city', COUNT(A) 'Count'")
-
-Now, generate the formula based on the current input:
-`;
-                let chatHistory = [];
-                chatHistory.push({ role: "user", parts: [{ text: prompt }] });
-                const payload = { contents: chatHistory };
-
-                // This is the endpoint for your *backend proxy server*
-                // If running locally, it's likely http://127.0.0.1:5000/generate-query
-                // In production, this would be your deployed proxy server URL
-                const proxyApiUrl = "http://127.0.0.1:5000/generate-query"; // <-- CHANGE THIS TO YOUR DEPLOYED PROXY URL
-
-                const response = await fetch(proxyApiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(`Proxy server error: ${errorData.error || response.statusText}`);
+                // WHERE part (optional, but good for common pivot table needs)
+                // For this specific request, we'll keep it simple as "WHERE [first selected column] IS NOT NULL"
+                // If no columns are selected, this part will be skipped or adjusted.
+                let wherePart = "";
+                if (selectedColumnLetters.length > 0) {
+                     wherePart = ` WHERE ${selectedColumnLetters[0]} IS NOT NULL`;
+                } else if (firstColumnLetter) { // Fallback for basic count even if no other cols selected
+                     wherePart = ` WHERE ${firstColumnLetter} IS NOT NULL`;
                 }
 
-                const result = await response.json();
-                if (result.candidates && result.candidates.length > 0 &&
-                    result.candidates[0].content && result.candidates[0].content.parts &&
-                    result.candidates[0].content.parts.length > 0) {
-                    let generatedText = result.candidates[0].content.parts[0].text.trim();
-                    generatedQueryTextarea.value = generatedText;
-                    queryOutputContainer.style.display = 'block'; // Show the output container
-                    alertUser("QUERY formula generated successfully!", "success");
+
+                // GROUP BY part
+                const groupByPart = selectedColumnLetters.length > 0 ? ` GROUP BY ${selectedColumnLetters.join(', ')}` : '';
+
+                // ORDER BY part
+                const orderByPart = ` ORDER BY COUNT(${firstColumnLetter}) DESC`;
+
+                // LABEL part
+                let labelPart = selectedColumnLetters.map(headerLetter => {
+                    const originalHeader = Object.keys(headerColumnMap).find(key => headerColumnMap[key] === headerLetter);
+                    return `${headerLetter} '${originalHeader}'`;
+                }).join(', ');
+                if (labelPart) {
+                    labelPart += `, COUNT(${firstColumnLetter}) 'Count'`;
                 } else {
-                    alertUser("Failed to generate QUERY. No valid response from AI.", "error");
-                    console.error("AI response structure unexpected:", result);
+                    labelPart = `COUNT(${firstColumnLetter}) 'Count'`;
                 }
+                labelPart = ` LABEL ${labelPart}`;
+
+
+                const generatedQuery = `=QUERY(orders!A:BR, "SELECT ${selectPart}${wherePart}${groupByPart}${orderByPart}${labelPart}")`;
+                // --- End of deterministic QUERY generation logic ---
+
+                generatedQueryTextarea.value = generatedQuery;
+                queryOutputContainer.style.display = 'block'; // Show the output container
+                alertUser("QUERY formula generated successfully!", "success");
 
             } catch (error) {
-                console.error("Error calling proxy server:", error);
+                console.error("Error generating QUERY formula:", error);
                 alertUser("Error generating QUERY: " + error.message, "error");
             } finally {
                 // Hide loading state
